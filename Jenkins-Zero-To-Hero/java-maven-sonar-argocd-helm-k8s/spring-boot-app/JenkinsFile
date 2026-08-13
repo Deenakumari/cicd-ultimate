@@ -1,3 +1,4 @@
+
 pipeline {
 
     agent any
@@ -18,16 +19,8 @@ pipeline {
 
     stages {
 
-        /*
-         * ============================================================
-         * CHECKOUT
-         * ============================================================
-         */
-
         stage('Checkout') {
-
             steps {
-
                 echo '===== CHECKOUT ====='
 
                 deleteDir()
@@ -41,39 +34,22 @@ pipeline {
                     set -e
 
                     echo "===== GIT COMMIT ====="
-
                     git log -1 --oneline
 
-                    echo "===== APPLICATION DIRECTORY ====="
-
+                    echo "===== CHECK APPLICATION ====="
                     ls -la "$APP_DIR"
 
-                    echo "===== CHECK POM ====="
-
                     test -f "$APP_DIR/pom.xml"
-
-                    echo "===== CHECK DEPLOYMENT FILE ====="
-
                     test -f "$MANIFEST_FILE"
 
-                    echo "===== CURRENT IMAGE ====="
-
+                    echo "===== CURRENT DEPLOYMENT IMAGE ====="
                     grep -n "image:" "$MANIFEST_FILE" || true
                 '''
             }
         }
 
-
-        /*
-         * ============================================================
-         * BUILD AND TEST
-         * ============================================================
-         */
-
         stage('Build and Test') {
-
             steps {
-
                 echo '===== BUILD AND TEST ====='
 
                 sh '''
@@ -101,22 +77,13 @@ pipeline {
                         -Dmaven.repo.local=/tmp/.m2/repository \
                         clean package
 
-                    echo "===== BUILD SUCCESSFUL ====="
+                    echo "===== BUILD AND TEST SUCCESSFUL ====="
                 '''
             }
         }
 
-
-        /*
-         * ============================================================
-         * SONARQUBE
-         * ============================================================
-         */
-
         stage('Static Code Analysis') {
-
             steps {
-
                 echo '===== STATIC CODE ANALYSIS ====='
 
                 withCredentials([
@@ -143,7 +110,7 @@ pipeline {
 
                         echo
 
-                        echo "===== START SONAR ANALYSIS ====="
+                        echo "===== START SONARQUBE ANALYSIS ====="
 
                         docker run --rm \
                             --entrypoint="" \
@@ -157,33 +124,24 @@ pipeline {
                             mvn \
                             -Dmaven.repo.local=/tmp/.m2/repository \
                             -Dsonar.userHome=/tmp/.sonar \
-                            org.sonarsource.scanner.maven:5.7.0.6970:sonar \
+                            org.sonarsource.scanner.maven:sonar-maven-plugin:5.7.0.6970:sonar \
                             -Dsonar.host.url="$SONAR_URL" \
                             -Dsonar.token="$SONAR_TOKEN"
 
-                        echo "===== SONAR ANALYSIS SUCCESSFUL ====="
+                        echo "===== SONARQUBE ANALYSIS SUCCESSFUL ====="
                     '''
                 }
             }
         }
 
-
-        /*
-         * ============================================================
-         * DOCKER BUILD
-         * ============================================================
-         */
-
         stage('Build Docker Image') {
-
             steps {
-
                 echo '===== BUILD DOCKER IMAGE ====='
 
                 sh '''
                     set -e
 
-                    echo "Docker Image:"
+                    echo "===== DOCKER IMAGE ====="
                     echo "$DOCKER_IMAGE"
 
                     cd "$APP_DIR"
@@ -194,22 +152,14 @@ pipeline {
 
                     echo "===== DOCKER IMAGE CREATED ====="
 
-                    docker image inspect "$DOCKER_IMAGE"
+                    docker image inspect "$DOCKER_IMAGE" \
+                        --format='{{.RepoTags}}'
                 '''
             }
         }
 
-
-        /*
-         * ============================================================
-         * DOCKER PUSH
-         * ============================================================
-         */
-
         stage('Push Docker Image') {
-
             steps {
-
                 echo '===== PUSH DOCKER IMAGE ====='
 
                 withCredentials([
@@ -226,7 +176,7 @@ pipeline {
                         echo "===== DOCKER LOGIN ====="
 
                         echo "$DOCKER_PASSWORD" | docker login \
-                            -u "$DOCKER_USERNAME" \
+                            --username "$DOCKER_USERNAME" \
                             --password-stdin
 
                         echo "===== DOCKER PUSH ====="
@@ -238,39 +188,26 @@ pipeline {
                         docker logout
 
                         echo "===== DOCKER PUSH SUCCESSFUL ====="
-
-                        echo "Pushed:"
-                        echo "$DOCKER_IMAGE"
+                        echo "Image: $DOCKER_IMAGE"
                     '''
                 }
             }
         }
 
-
-        /*
-         * ============================================================
-         * UPDATE KUBERNETES DEPLOYMENT
-         * ============================================================
-         */
-
         stage('Update Deployment File') {
-
             steps {
-
                 echo '===== UPDATE DEPLOYMENT FILE ====='
 
                 sh '''
                     set -e
 
-                    echo "===== BEFORE UPDATE ====="
+                    echo "===== IMAGE BEFORE UPDATE ====="
 
                     grep -n "image:" "$MANIFEST_FILE"
 
                     echo "===== NEW IMAGE ====="
 
                     echo "$DOCKER_IMAGE"
-
-                    echo "===== UPDATING IMAGE ====="
 
                     python3 - "$MANIFEST_FILE" "$DOCKER_IMAGE" <<'PY'
 
@@ -287,13 +224,13 @@ pattern = r'(^[ \\t]*image:[ \\t]*)deena012/ultimate-cicd:[^ \\t\\r\\n]+'
 
 updated_content, count = re.subn(
     pattern,
-    lambda match: match.group(1) + new_image,
+    lambda m: m.group(1) + new_image,
     content,
     flags=re.MULTILINE
 )
 
 if count == 0:
-    print("ERROR: Could not find deena012/ultimate-cicd image")
+    print("ERROR: deena012/ultimate-cicd image was not found")
     sys.exit(1)
 
 with open(manifest_file, "w") as f:
@@ -304,31 +241,22 @@ print("New image:", new_image)
 
 PY
 
-                    echo "===== AFTER UPDATE ====="
+                    echo "===== IMAGE AFTER UPDATE ====="
 
                     grep -n "image:" "$MANIFEST_FILE"
 
-                    echo "===== VERIFY IMAGE ====="
+                    echo "===== VERIFY ====="
 
                     grep -q "image: $DOCKER_IMAGE" "$MANIFEST_FILE"
 
-                    echo "===== DEPLOYMENT IMAGE UPDATED SUCCESSFULLY ====="
+                    echo "===== DEPLOYMENT FILE UPDATED ====="
                 '''
             }
         }
 
-
-        /*
-         * ============================================================
-         * GITHUB COMMIT AND PUSH
-         * ============================================================
-         */
-
         stage('Commit and Push Manifest') {
-
             steps {
-
-                echo '===== COMMIT AND PUSH ====='
+                echo '===== COMMIT AND PUSH MANIFEST ====='
 
                 withCredentials([
                     string(
@@ -340,10 +268,7 @@ PY
                     sh '''
                         set -e
 
-                        echo "===== GIT CONFIG ====="
-
                         git config user.email "deenamadhumanchi@gmail.com"
-
                         git config user.name "Deenakumari"
 
                         echo "===== GIT STATUS ====="
@@ -354,8 +279,6 @@ PY
 
                         git diff -- "$MANIFEST_FILE"
 
-                        echo "===== GIT ADD ====="
-
                         git add "$MANIFEST_FILE"
 
                         echo "===== STAGED DIFF ====="
@@ -363,24 +286,16 @@ PY
                         git diff --cached
 
                         if git diff --cached --quiet; then
-
-                            echo "No deployment changes to commit."
-
+                            echo "No changes to commit."
                         else
-
-                            echo "===== GIT COMMIT ====="
-
                             git commit \
                                 -m "Update deployment image to version ${BUILD_NUMBER}"
-
-                            echo "===== GIT PUSH ====="
 
                             git push \
                                 "https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git" \
                                 HEAD:main
 
                             echo "===== GITHUB PUSH SUCCESSFUL ====="
-
                         fi
                     '''
                 }
@@ -388,17 +303,9 @@ PY
         }
     }
 
-
-    /*
-     * ================================================================
-     * POST
-     * ================================================================
-     */
-
     post {
 
         success {
-
             echo '''
 ========================================
        PIPELINE SUCCESSFUL
@@ -406,14 +313,10 @@ PY
 '''
 
             echo "Build Number : ${BUILD_NUMBER}"
-
             echo "Docker Image : ${DOCKER_IMAGE}"
-
-            echo "Deployment   : ${MANIFEST_FILE}"
         }
 
         failure {
-
             echo '''
 ========================================
          PIPELINE FAILED
@@ -421,12 +324,9 @@ PY
 '''
 
             echo "Build Number : ${BUILD_NUMBER}"
-
-            echo "Check the failed stage above."
         }
 
         always {
-
             echo '===== PIPELINE COMPLETED ====='
         }
     }
