@@ -18,7 +18,6 @@ pipeline {
 
         stage('Checkout') {
             steps {
-
                 echo '===== CHECKOUT ====='
 
                 git(
@@ -32,19 +31,13 @@ pipeline {
                     echo "===== GIT COMMIT ====="
                     git log -1 --oneline
 
-                    echo "===== PROJECT ====="
-                    ls -la
-
-                    echo "===== APPLICATION ====="
+                    echo "===== APPLICATION DIRECTORY ====="
                     ls -la "$APP_DIR"
 
-                    echo "===== POM ====="
                     test -f "$APP_DIR/pom.xml"
-
-                    echo "===== DEPLOYMENT FILE ====="
                     test -f "$MANIFEST_FILE"
 
-                    echo "===== CURRENT IMAGE ====="
+                    echo "===== CURRENT DEPLOYMENT IMAGE ====="
                     grep -n "image:" "$MANIFEST_FILE"
                 '''
             }
@@ -52,7 +45,6 @@ pipeline {
 
         stage('Build and Test') {
             steps {
-
                 echo '===== BUILD AND TEST ====='
 
                 sh '''
@@ -87,7 +79,6 @@ pipeline {
 
         stage('Static Code Analysis') {
             steps {
-
                 echo '===== SONARQUBE ANALYSIS ====='
 
                 withCredentials([
@@ -100,20 +91,38 @@ pipeline {
                     sh '''
                         set -e
 
+                        echo "===== SONARQUBE STATUS ====="
+
+                        curl -f -s \
+                            "$SONAR_URL/api/system/status"
+
+                        echo
+                        echo "SonarQube is reachable."
+
+                        echo "===== SONARQUBE VERSION ====="
+
+                        curl -f -s \
+                            "$SONAR_URL/api/server/version"
+
+                        echo
+
+                        echo "===== RUNNING SONARQUBE ANALYSIS ====="
+
                         docker run --rm \
                             --entrypoint="" \
                             --user "$(id -u):$(id -g)" \
                             -e MAVEN_CONFIG=/tmp/.m2 \
+                            -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
                             -v "$WORKSPACE:/workspace" \
                             -w "/workspace/$APP_DIR" \
                             jenkins-maven-java21-docker:1.0 \
                             mvn \
                             -Dmaven.repo.local=/tmp/.m2/repository \
                             org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
-                            -Dsonar.token="$SONAR_AUTH_TOKEN" \
+                            -Dsonar.token="$SONAR_TOKEN" \
                             -Dsonar.host.url="$SONAR_URL"
 
-                        echo "===== SONARQUBE ANALYSIS COMPLETED ====="
+                        echo "===== SONARQUBE ANALYSIS SUCCESSFUL ====="
                     '''
                 }
             }
@@ -121,13 +130,12 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-
                 echo '===== BUILD DOCKER IMAGE ====='
 
                 sh '''
                     set -e
 
-                    echo "Docker image:"
+                    echo "Docker Image:"
                     echo "$DOCKER_IMAGE"
 
                     cd "$APP_DIR"
@@ -139,14 +147,13 @@ pipeline {
                     echo "===== DOCKER IMAGE CREATED ====="
 
                     docker image inspect "$DOCKER_IMAGE" \
-                        --format='Image: {{.RepoTags}}'
+                        --format='{{.RepoTags}}'
                 '''
             }
         }
 
         stage('Push Docker Image') {
             steps {
-
                 echo '===== PUSH DOCKER IMAGE ====='
 
                 withCredentials([
@@ -169,7 +176,7 @@ pipeline {
                         docker logout
 
                         echo "===== DOCKER PUSH SUCCESSFUL ====="
-                        echo "Pushed: $DOCKER_IMAGE"
+                        echo "Pushed image: $DOCKER_IMAGE"
                     '''
                 }
             }
@@ -177,7 +184,6 @@ pipeline {
 
         stage('Update Deployment File') {
             steps {
-
                 echo '===== UPDATE DEPLOYMENT FILE ====='
 
                 sh '''
@@ -195,7 +201,7 @@ pipeline {
 
                     echo "$DOCKER_IMAGE"
 
-                    echo "===== UPDATING IMAGE ====="
+                    echo "===== UPDATING DEPLOYMENT ====="
 
                     python3 - "$MANIFEST_FILE" "$DOCKER_IMAGE" <<'PY'
 import sys
@@ -207,11 +213,11 @@ new_image = sys.argv[2]
 with open(manifest_file, "r") as f:
     content = f.read()
 
-pattern = r'(^[ \t]*image:[ \t]*)deena012/ultimate-cicd:[^ \t\\r\\n]+'
+pattern = r'(^[ \t]*image:[ \t]*)deena012/ultimate-cicd:[^ \t\r\n]+'
 
 updated_content, count = re.subn(
     pattern,
-    lambda match: match.group(1) + new_image,
+    lambda m: m.group(1) + new_image,
     content,
     flags=re.MULTILINE
 )
@@ -235,18 +241,17 @@ PY
 
                     grep -n "image:" "$MANIFEST_FILE"
 
-                    echo "===== VERIFYING ====="
+                    echo "===== VERIFY ====="
 
                     grep -q "image: $DOCKER_IMAGE" "$MANIFEST_FILE"
 
-                    echo "SUCCESS: Deployment image updated."
+                    echo "SUCCESS: Deployment image updated to $DOCKER_IMAGE"
                 '''
             }
         }
 
         stage('Commit and Push Manifest') {
             steps {
-
                 echo '===== COMMIT AND PUSH MANIFEST ====='
 
                 withCredentials([
@@ -300,12 +305,9 @@ PY
     post {
 
         success {
-
-            echo '''
-========================================
-       PIPELINE SUCCESSFUL
-========================================
-'''
+            echo '========================================'
+            echo '       PIPELINE SUCCESSFUL'
+            echo '========================================'
 
             echo "Build Number : ${BUILD_NUMBER}"
             echo "Docker Image : ${DOCKER_IMAGE}"
@@ -313,19 +315,14 @@ PY
         }
 
         failure {
-
-            echo '''
-========================================
-          PIPELINE FAILED
-========================================
-'''
+            echo '========================================'
+            echo '          PIPELINE FAILED'
+            echo '========================================'
 
             echo "Build Number : ${BUILD_NUMBER}"
-            echo "Check the failed stage above."
         }
 
         always {
-
             echo '===== PIPELINE COMPLETED ====='
         }
     }
