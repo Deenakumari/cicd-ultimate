@@ -1,109 +1,149 @@
 pipeline {
+
     agent any
 
-    stages {
-        stage('Docker Test') {
-            steps {
-                sh '''
-                    echo "===== Docker version ====="
-                    docker --version
+    environment {
+        APP_DIR = 'java-maven-sonar-argocd-helm-k8s/spring-boot-app'
+        MANIFEST_FILE = 'java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml'
 
-                    echo "===== Image ====="
-                    docker image inspect jenkins-maven-java21-docker:1.0 \
-                      --format='Entrypoint={{json .Config.Entrypoint}} Cmd={{json .Config.Cmd}}'
+        SONAR_URL = 'http://3.88.239.200:9000'
 
-                    echo "===== Container test ====="
-                    docker run --rm \
-                      --entrypoint="" \
-                      --user root \
-                      -v /var/run/docker.sock:/var/run/docker.sock \
-                      jenkins-maven-java21-docker:1.0 \
-                      cat
+        DOCKER_IMAGE = "deena012/ultimate-cicd:${BUILD_NUMBER}"
 
-                    echo "===== SUCCESS ====="
-                '''
-            }
-        }
+        GIT_REPO_NAME = 'cicd-ultimate'
+        GIT_USER_NAME = 'Deenakumari'
     }
-}
 
     stages {
 
         stage('Checkout') {
             steps {
+                echo '===== CHECKOUT ====='
+
                 git branch: 'main',
                     url: 'https://github.com/Deenakumari/cicd-ultimate.git'
+
+                sh '''
+                    echo "===== GIT STATUS ====="
+                    git status
+
+                    echo "===== FILES ====="
+                    ls -la
+                '''
             }
         }
 
         stage('Build and Test') {
             steps {
-                sh 'ls -ltr'
+                echo '===== BUILD AND TEST ====='
 
                 sh '''
-                    cd java-maven-sonar-argocd-helm-k8s/spring-boot-app
-                    mvn clean package
+                    docker run --rm \
+                        --entrypoint="" \
+                        --user root \
+                        -v "$WORKSPACE":/workspace \
+                        -w /workspace/$APP_DIR \
+                        jenkins-maven-java21-docker:1.0 \
+                        mvn clean package
                 '''
             }
         }
 
         stage('Static Code Analysis') {
-            environment {
-                SONAR_URL = 'http://3.88.239.200:9000'
-            }
-
             steps {
+                echo '===== SONARQUBE ANALYSIS ====='
+
                 withCredentials([
                     string(
                         credentialsId: 'sonarqube',
                         variable: 'SONAR_AUTH_TOKEN'
                     )
                 ]) {
-                    sh '''
-                        cd java-maven-sonar-argocd-helm-k8s/spring-boot-app
 
-                        mvn org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
-                            -Dsonar.token=$SONAR_AUTH_TOKEN \
-                            -Dsonar.host.url=$SONAR_URL
+                    sh '''
+                        docker run --rm \
+                            --entrypoint="" \
+                            --user root \
+                            -v "$WORKSPACE":/workspace \
+                            -w /workspace/$APP_DIR \
+                            jenkins-maven-java21-docker:1.0 \
+                            mvn org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+                            -Dsonar.token="$SONAR_AUTH_TOKEN" \
+                            -Dsonar.host.url="$SONAR_URL"
                     '''
                 }
             }
         }
 
-        stage('Build and Push Docker Image') {
-            environment {
-                DOCKER_IMAGE = "deena012/ultimate-cicd:${BUILD_NUMBER}"
-            }
-
+        stage('Build Docker Image') {
             steps {
-                script {
+                echo '===== BUILD DOCKER IMAGE ====='
+
+                sh '''
+                    cd "$APP_DIR"
+
+                    docker build \
+                        -t "$DOCKER_IMAGE" \
+                        .
+                '''
+
+                sh '''
+                    echo "===== DOCKER IMAGE ====="
+                    docker images | grep ultimate-cicd
+                '''
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                echo '===== PUSH DOCKER IMAGE ====='
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'docker-cred',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
 
                     sh '''
-                        cd java-maven-sonar-argocd-helm-k8s/spring-boot-app
+                        echo "$DOCKER_PASSWORD" | docker login \
+                            -u "$DOCKER_USERNAME" \
+                            --password-stdin
 
-                        docker build \
-                            -t ${DOCKER_IMAGE} .
+                        docker push "$DOCKER_IMAGE"
+
+                        docker logout
                     '''
-
-                    def dockerImage = docker.image("${DOCKER_IMAGE}")
-
-                    docker.withRegistry(
-                        'https://index.docker.io/v1/',
-                        'docker-cred'
-                    ) {
-                        dockerImage.push()
-                    }
                 }
             }
         }
 
         stage('Update Deployment File') {
-            environment {
-                GIT_REPO_NAME = 'cicd-ultimate'
-                GIT_USER_NAME = 'Deenakumari'
-            }
-
             steps {
+                echo '===== UPDATE DEPLOYMENT FILE ====='
+
+                sh '''
+                    echo "===== BEFORE UPDATE ====="
+
+                    grep -n "image:" "$MANIFEST_FILE" || true
+
+                    echo "===== UPDATE IMAGE TAG ====="
+
+                    sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" \
+                        "$MANIFEST_FILE"
+
+                    echo "===== AFTER UPDATE ====="
+
+                    grep -n "image:" "$MANIFEST_FILE"
+                '''
+            }
+        }
+
+        stage('Commit and Push Manifest') {
+            steps {
+                echo '===== COMMIT AND PUSH MANIFEST ====='
+
                 withCredentials([
                     string(
                         credentialsId: 'github',
@@ -114,42 +154,58 @@ pipeline {
                     sh '''
                         set -e
 
-                        echo "===== GIT STATUS ====="
-                        git status
-
-                        echo "===== GIT REMOTE ====="
-                        git remote -v
-
                         git config user.email "deenamadhumanchi@gmail.com"
                         git config user.name "Deenakumari"
 
-                        echo "===== UPDATE IMAGE TAG ====="
-
-                        sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" \
-                        java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
-
-                        echo "===== GIT ADD ====="
-
-                        git add \
-                        java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
+                        echo "===== GIT STATUS ====="
+                        git status
 
                         echo "===== GIT DIFF ====="
+                        git diff
 
+                        git add "$MANIFEST_FILE"
+
+                        echo "===== STAGED DIFF ====="
                         git diff --cached
 
-                        echo "===== GIT COMMIT ====="
-
                         git commit \
-                            -m "Update deployment image to version ${BUILD_NUMBER}" || true
+                            -m "Update deployment image to version ${BUILD_NUMBER}" \
+                            || echo "No changes to commit"
 
-                        echo "===== GIT PUSH ====="
+                        echo "===== PUSHING TO GITHUB ====="
 
                         git push \
-                            https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git \
+                            "https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git" \
                             HEAD:main
                     '''
                 }
             }
+        }
+    }
+
+    post {
+
+        success {
+            echo '''
+========================================
+        PIPELINE SUCCESSFUL
+========================================
+'''
+            echo "Docker Image: ${DOCKER_IMAGE}"
+            echo "Build Number: ${BUILD_NUMBER}"
+        }
+
+        failure {
+            echo '''
+========================================
+        PIPELINE FAILED
+========================================
+'''
+            echo "Check the stage above for the actual failure."
+        }
+
+        always {
+            echo '===== PIPELINE COMPLETED ====='
         }
     }
 }
