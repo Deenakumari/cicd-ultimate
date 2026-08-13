@@ -20,15 +20,20 @@ pipeline {
             steps {
                 echo '===== CHECKOUT ====='
 
+                deleteDir()
+
                 git branch: 'main',
                     url: 'https://github.com/Deenakumari/cicd-ultimate.git'
 
                 sh '''
-                    echo "===== GIT STATUS ====="
-                    git status
+                    echo "===== CHECKED OUT COMMIT ====="
+                    git log -1 --oneline
 
-                    echo "===== PROJECT FILES ====="
-                    ls -la
+                    echo "===== MANIFEST FILE ====="
+                    ls -l "$MANIFEST_FILE"
+
+                    echo "===== CURRENT IMAGE ====="
+                    grep -n "image:" "$MANIFEST_FILE"
                 '''
             }
         }
@@ -88,8 +93,7 @@ pipeline {
                 '''
 
                 sh '''
-                    echo "===== DOCKER IMAGE CREATED ====="
-                    docker images | grep ultimate-cicd || true
+                    docker images | grep "deena012/ultimate-cicd" || true
                 '''
             }
         }
@@ -126,25 +130,48 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "===== MANIFEST BEFORE UPDATE ====="
+                    echo "========================================"
+                    echo "MANIFEST BEFORE UPDATE"
+                    echo "========================================"
+
+                    cat "$MANIFEST_FILE"
+
+                    echo "========================================"
+                    echo "CURRENT IMAGE"
+                    echo "========================================"
 
                     grep -n "image:" "$MANIFEST_FILE"
 
-                    echo "===== UPDATING IMAGE ====="
+                    echo "========================================"
+                    echo "NEW IMAGE"
+                    echo "========================================"
+
+                    echo "$DOCKER_IMAGE"
+
+                    echo "========================================"
+                    echo "UPDATING MANIFEST"
+                    echo "========================================"
 
                     sed -i -E \
-                        "s|^[[:space:]]*image:.*|        image: ${DOCKER_IMAGE}|" \
+                        's|^([[:space:]]*)image:[[:space:]]*deena012/ultimate-cicd:.*$|\\1image: '"$DOCKER_IMAGE"'|' \
                         "$MANIFEST_FILE"
 
-                    echo "===== MANIFEST AFTER UPDATE ====="
+                    echo "========================================"
+                    echo "MANIFEST AFTER UPDATE"
+                    echo "========================================"
 
                     grep -n "image:" "$MANIFEST_FILE"
 
-                    echo "===== VERIFY IMAGE TAG ====="
+                    echo "========================================"
+                    echo "VERIFYING UPDATE"
+                    echo "========================================"
 
-                    grep -q "${DOCKER_IMAGE}" "$MANIFEST_FILE"
-
-                    echo "Image update successful."
+                    if grep -q "image: $DOCKER_IMAGE" "$MANIFEST_FILE"; then
+                        echo "SUCCESS: Deployment image updated to $DOCKER_IMAGE"
+                    else
+                        echo "ERROR: Deployment image was NOT updated"
+                        exit 1
+                    fi
                 '''
             }
         }
@@ -174,14 +201,12 @@ pipeline {
 
                         git add "$MANIFEST_FILE"
 
-                        echo "===== STAGED CHANGES ====="
+                        echo "===== STAGED DIFF ====="
                         git diff --cached
 
                         git commit \
                             -m "Update deployment image to version ${BUILD_NUMBER}" \
                             || echo "No changes to commit"
-
-                        echo "===== PUSHING TO GITHUB ====="
 
                         git push \
                             "https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git" \
@@ -203,19 +228,16 @@ pipeline {
 
             echo "Build Number : ${BUILD_NUMBER}"
             echo "Docker Image : ${DOCKER_IMAGE}"
-            echo "Manifest     : ${MANIFEST_FILE}"
         }
 
         failure {
             echo '========================================'
             echo '          PIPELINE FAILED'
             echo '========================================'
-
-            echo "Build Number : ${BUILD_NUMBER}"
         }
 
         always {
             echo '===== PIPELINE COMPLETED ====='
         }
     }
-}                   
+}
