@@ -20,19 +20,16 @@ pipeline {
             steps {
                 echo '===== CHECKOUT ====='
 
-                deleteDir()
-
                 git branch: 'main',
                     url: 'https://github.com/Deenakumari/cicd-ultimate.git'
 
                 sh '''
-                    echo "===== CHECKED OUT COMMIT ====="
+                    set -e
+
+                    echo "===== GIT COMMIT ====="
                     git log -1 --oneline
 
-                    echo "===== MANIFEST FILE ====="
-                    ls -l "$MANIFEST_FILE"
-
-                    echo "===== CURRENT IMAGE ====="
+                    echo "===== MANIFEST ====="
                     grep -n "image:" "$MANIFEST_FILE"
                 '''
             }
@@ -43,9 +40,17 @@ pipeline {
                 echo '===== BUILD AND TEST ====='
 
                 sh '''
+                    set -e
+
+                    JENKINS_UID=$(id -u)
+                    JENKINS_GID=$(id -g)
+
+                    echo "Jenkins UID: $JENKINS_UID"
+                    echo "Jenkins GID: $JENKINS_GID"
+
                     docker run --rm \
                         --entrypoint="" \
-                        --user root \
+                        --user "$JENKINS_UID:$JENKINS_GID" \
                         -v "$WORKSPACE":/workspace \
                         -w /workspace/$APP_DIR \
                         jenkins-maven-java21-docker:1.0 \
@@ -66,9 +71,14 @@ pipeline {
                 ]) {
 
                     sh '''
+                        set -e
+
+                        JENKINS_UID=$(id -u)
+                        JENKINS_GID=$(id -g)
+
                         docker run --rm \
                             --entrypoint="" \
-                            --user root \
+                            --user "$JENKINS_UID:$JENKINS_GID" \
                             -v "$WORKSPACE":/workspace \
                             -w /workspace/$APP_DIR \
                             jenkins-maven-java21-docker:1.0 \
@@ -85,15 +95,16 @@ pipeline {
                 echo '===== BUILD DOCKER IMAGE ====='
 
                 sh '''
+                    set -e
+
                     cd "$APP_DIR"
 
                     docker build \
                         -t "$DOCKER_IMAGE" \
                         .
-                '''
 
-                sh '''
-                    docker images | grep "deena012/ultimate-cicd" || true
+                    echo "===== IMAGE CREATED ====="
+                    docker images | grep "deena012/ultimate-cicd"
                 '''
             }
         }
@@ -111,6 +122,8 @@ pipeline {
                 ]) {
 
                     sh '''
+                        set -e
+
                         echo "$DOCKER_PASSWORD" | docker login \
                             --username "$DOCKER_USERNAME" \
                             --password-stdin
@@ -130,48 +143,28 @@ pipeline {
                 sh '''
                     set -e
 
-                    echo "========================================"
-                    echo "MANIFEST BEFORE UPDATE"
-                    echo "========================================"
-
-                    cat "$MANIFEST_FILE"
-
-                    echo "========================================"
-                    echo "CURRENT IMAGE"
-                    echo "========================================"
-
+                    echo "===== BEFORE UPDATE ====="
+                    grep -n -A5 -B2 "spring-boot-app" "$MANIFEST_FILE" || true
                     grep -n "image:" "$MANIFEST_FILE"
 
-                    echo "========================================"
-                    echo "NEW IMAGE"
-                    echo "========================================"
-
+                    echo "===== NEW IMAGE ====="
                     echo "$DOCKER_IMAGE"
 
-                    echo "========================================"
-                    echo "UPDATING MANIFEST"
-                    echo "========================================"
+                    echo "===== UPDATING IMAGE ====="
 
                     sed -i -E \
-                        's|^([[:space:]]*)image:[[:space:]]*deena012/ultimate-cicd:.*$|\\1image: '"$DOCKER_IMAGE"'|' \
+                        "s|^([[:space:]]*)image:[[:space:]]*deena012/ultimate-cicd:.*$|\\1image: ${DOCKER_IMAGE}|" \
                         "$MANIFEST_FILE"
 
-                    echo "========================================"
-                    echo "MANIFEST AFTER UPDATE"
-                    echo "========================================"
-
+                    echo "===== AFTER UPDATE ====="
+                    grep -n -A5 -B2 "spring-boot-app" "$MANIFEST_FILE" || true
                     grep -n "image:" "$MANIFEST_FILE"
 
-                    echo "========================================"
-                    echo "VERIFYING UPDATE"
-                    echo "========================================"
+                    echo "===== VERIFY ====="
 
-                    if grep -q "image: $DOCKER_IMAGE" "$MANIFEST_FILE"; then
-                        echo "SUCCESS: Deployment image updated to $DOCKER_IMAGE"
-                    else
-                        echo "ERROR: Deployment image was NOT updated"
-                        exit 1
-                    fi
+                    grep -q "image: ${DOCKER_IMAGE}" "$MANIFEST_FILE"
+
+                    echo "SUCCESS: Image updated to ${DOCKER_IMAGE}"
                 '''
             }
         }
@@ -208,11 +201,13 @@ pipeline {
                             -m "Update deployment image to version ${BUILD_NUMBER}" \
                             || echo "No changes to commit"
 
+                        echo "===== PUSHING TO GITHUB ====="
+
                         git push \
                             "https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git" \
                             HEAD:main
 
-                        echo "===== GITHUB PUSH SUCCESSFUL ====="
+                        echo "===== PUSH SUCCESSFUL ====="
                     '''
                 }
             }
@@ -228,12 +223,15 @@ pipeline {
 
             echo "Build Number : ${BUILD_NUMBER}"
             echo "Docker Image : ${DOCKER_IMAGE}"
+            echo "Manifest     : ${MANIFEST_FILE}"
         }
 
         failure {
             echo '========================================'
             echo '          PIPELINE FAILED'
             echo '========================================'
+
+            echo "Build Number : ${BUILD_NUMBER}"
         }
 
         always {
