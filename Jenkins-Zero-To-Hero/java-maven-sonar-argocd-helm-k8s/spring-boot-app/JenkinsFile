@@ -18,6 +18,7 @@ pipeline {
 
         stage('Checkout') {
             steps {
+
                 echo '===== CHECKOUT ====='
 
                 git(
@@ -34,6 +35,12 @@ pipeline {
                     echo "===== PROJECT ====="
                     ls -la
 
+                    echo "===== APPLICATION ====="
+                    ls -la "$APP_DIR"
+
+                    echo "===== POM ====="
+                    test -f "$APP_DIR/pom.xml"
+
                     echo "===== DEPLOYMENT FILE ====="
                     test -f "$MANIFEST_FILE"
 
@@ -45,30 +52,42 @@ pipeline {
 
         stage('Build and Test') {
             steps {
+
                 echo '===== BUILD AND TEST ====='
 
                 sh '''
                     set -e
 
-                    JENKINS_UID=$(id -u)
-                    JENKINS_GID=$(id -g)
-
-                    echo "Jenkins UID: $JENKINS_UID"
-                    echo "Jenkins GID: $JENKINS_GID"
+                    echo "===== MAVEN VERSION ====="
 
                     docker run --rm \
                         --entrypoint="" \
-                        --user "$JENKINS_UID:$JENKINS_GID" \
+                        --user "$(id -u):$(id -g)" \
+                        -e MAVEN_CONFIG=/tmp/.m2 \
+                        jenkins-maven-java21-docker:1.0 \
+                        mvn -version
+
+                    echo "===== MAVEN BUILD ====="
+
+                    docker run --rm \
+                        --entrypoint="" \
+                        --user "$(id -u):$(id -g)" \
+                        -e MAVEN_CONFIG=/tmp/.m2 \
                         -v "$WORKSPACE:/workspace" \
                         -w "/workspace/$APP_DIR" \
                         jenkins-maven-java21-docker:1.0 \
-                        mvn clean package
+                        mvn \
+                        -Dmaven.repo.local=/tmp/.m2/repository \
+                        clean package
+
+                    echo "===== BUILD SUCCESSFUL ====="
                 '''
             }
         }
 
         stage('Static Code Analysis') {
             steps {
+
                 echo '===== SONARQUBE ANALYSIS ====='
 
                 withCredentials([
@@ -81,18 +100,20 @@ pipeline {
                     sh '''
                         set -e
 
-                        JENKINS_UID=$(id -u)
-                        JENKINS_GID=$(id -g)
-
                         docker run --rm \
                             --entrypoint="" \
-                            --user "$JENKINS_UID:$JENKINS_GID" \
+                            --user "$(id -u):$(id -g)" \
+                            -e MAVEN_CONFIG=/tmp/.m2 \
                             -v "$WORKSPACE:/workspace" \
                             -w "/workspace/$APP_DIR" \
                             jenkins-maven-java21-docker:1.0 \
-                            mvn org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+                            mvn \
+                            -Dmaven.repo.local=/tmp/.m2/repository \
+                            org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
                             -Dsonar.token="$SONAR_AUTH_TOKEN" \
                             -Dsonar.host.url="$SONAR_URL"
+
+                        echo "===== SONARQUBE ANALYSIS COMPLETED ====="
                     '''
                 }
             }
@@ -100,12 +121,14 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
+
                 echo '===== BUILD DOCKER IMAGE ====='
 
                 sh '''
                     set -e
 
-                    echo "Docker image: $DOCKER_IMAGE"
+                    echo "Docker image:"
+                    echo "$DOCKER_IMAGE"
 
                     cd "$APP_DIR"
 
@@ -116,13 +139,14 @@ pipeline {
                     echo "===== DOCKER IMAGE CREATED ====="
 
                     docker image inspect "$DOCKER_IMAGE" \
-                        --format='{{.RepoTags}}'
+                        --format='Image: {{.RepoTags}}'
                 '''
             }
         }
 
         stage('Push Docker Image') {
             steps {
+
                 echo '===== PUSH DOCKER IMAGE ====='
 
                 withCredentials([
@@ -145,7 +169,7 @@ pipeline {
                         docker logout
 
                         echo "===== DOCKER PUSH SUCCESSFUL ====="
-                        echo "$DOCKER_IMAGE"
+                        echo "Pushed: $DOCKER_IMAGE"
                     '''
                 }
             }
@@ -153,18 +177,22 @@ pipeline {
 
         stage('Update Deployment File') {
             steps {
+
                 echo '===== UPDATE DEPLOYMENT FILE ====='
 
                 sh '''
                     set -e
 
-                    echo "===== MANIFEST BEFORE UPDATE ====="
-                    cat "$MANIFEST_FILE"
+                    echo "===== BEFORE UPDATE ====="
+
+                    grep -n -A5 -B2 "spring-boot-app" "$MANIFEST_FILE" || true
 
                     echo "===== CURRENT IMAGE ====="
+
                     grep -n "image:" "$MANIFEST_FILE"
 
                     echo "===== NEW IMAGE ====="
+
                     echo "$DOCKER_IMAGE"
 
                     echo "===== UPDATING IMAGE ====="
@@ -173,36 +201,41 @@ pipeline {
 import sys
 import re
 
-manifest = sys.argv[1]
+manifest_file = sys.argv[1]
 new_image = sys.argv[2]
 
-with open(manifest, "r") as f:
+with open(manifest_file, "r") as f:
     content = f.read()
 
-pattern = r'(^\\s*image:\\s*)deena012/ultimate-cicd:[^\\s]+'
+pattern = r'(^[ \t]*image:[ \t]*)deena012/ultimate-cicd:[^ \t\\r\\n]+'
 
-updated, count = re.subn(
+updated_content, count = re.subn(
     pattern,
-    lambda m: m.group(1) + new_image,
+    lambda match: match.group(1) + new_image,
     content,
     flags=re.MULTILINE
 )
 
 if count == 0:
-    print("ERROR: No deena012/ultimate-cicd image found in deployment.yml")
+    print("ERROR: No deena012/ultimate-cicd image found.")
     sys.exit(1)
 
-with open(manifest, "w") as f:
-    f.write(updated)
+with open(manifest_file, "w") as f:
+    f.write(updated_content)
 
-print(f"Updated {count} image reference(s)")
-print(f"New image: {new_image}")
+print("Updated image references:", count)
+print("New image:", new_image)
 PY
 
-                    echo "===== MANIFEST AFTER UPDATE ====="
+                    echo "===== AFTER UPDATE ====="
+
+                    grep -n -A5 -B2 "spring-boot-app" "$MANIFEST_FILE" || true
+
+                    echo "===== IMAGE AFTER UPDATE ====="
+
                     grep -n "image:" "$MANIFEST_FILE"
 
-                    echo "===== VERIFYING IMAGE ====="
+                    echo "===== VERIFYING ====="
 
                     grep -q "image: $DOCKER_IMAGE" "$MANIFEST_FILE"
 
@@ -213,6 +246,7 @@ PY
 
         stage('Commit and Push Manifest') {
             steps {
+
                 echo '===== COMMIT AND PUSH MANIFEST ====='
 
                 withCredentials([
@@ -229,18 +263,21 @@ PY
                         git config user.name "Deenakumari"
 
                         echo "===== GIT STATUS ====="
+
                         git status
 
                         echo "===== GIT DIFF ====="
+
                         git diff -- "$MANIFEST_FILE"
 
                         git add "$MANIFEST_FILE"
 
                         echo "===== STAGED DIFF ====="
+
                         git diff --cached
 
                         if git diff --cached --quiet; then
-                            echo "No manifest changes to commit."
+                            echo "No changes to commit."
                             exit 0
                         fi
 
@@ -263,23 +300,32 @@ PY
     post {
 
         success {
-            echo '========================================'
-            echo '        PIPELINE SUCCESSFUL'
-            echo '========================================'
+
+            echo '''
+========================================
+       PIPELINE SUCCESSFUL
+========================================
+'''
 
             echo "Build Number : ${BUILD_NUMBER}"
             echo "Docker Image : ${DOCKER_IMAGE}"
+            echo "Manifest     : ${MANIFEST_FILE}"
         }
 
         failure {
-            echo '========================================'
-            echo '          PIPELINE FAILED'
-            echo '========================================'
+
+            echo '''
+========================================
+          PIPELINE FAILED
+========================================
+'''
 
             echo "Build Number : ${BUILD_NUMBER}"
+            echo "Check the failed stage above."
         }
 
         always {
+
             echo '===== PIPELINE COMPLETED ====='
         }
     }
