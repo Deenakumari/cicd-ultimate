@@ -1,10 +1,31 @@
 pipeline {
-    agent {
-        docker {
-            image 'jenkins-maven-java21-docker:1.0'
-            args '--entrypoint="" --user root -v /var/run/docker.sock:/var/run/docker.sock'
+    agent any
+
+    stages {
+        stage('Docker Test') {
+            steps {
+                sh '''
+                    echo "===== Docker version ====="
+                    docker --version
+
+                    echo "===== Image ====="
+                    docker image inspect jenkins-maven-java21-docker:1.0 \
+                      --format='Entrypoint={{json .Config.Entrypoint}} Cmd={{json .Config.Cmd}}'
+
+                    echo "===== Container test ====="
+                    docker run --rm \
+                      --entrypoint="" \
+                      --user root \
+                      -v /var/run/docker.sock:/var/run/docker.sock \
+                      jenkins-maven-java21-docker:1.0 \
+                      cat
+
+                    echo "===== SUCCESS ====="
+                '''
+            }
         }
     }
+}
 
     stages {
 
