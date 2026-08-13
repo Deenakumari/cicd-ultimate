@@ -45,39 +45,53 @@ pipeline {
         }
       }
     }
-        stage('Update Deployment File') {
-        environment {
-            GIT_REPO_NAME = "cicd-ultimate"
-            GIT_USER_NAME = "Deenakumari"
-        }
+    stage('Update Deployment File') {
+    environment {
+        GIT_REPO_NAME = "cicd-ultimate"
+        GIT_USER_NAME = "Deenakumari"
+    }
 
-        steps {
-            withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
-                sh '''
-                    set -e
+    steps {
+        withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
+            sh '''
+                set -e
 
-                    git config user.email "deenamadhumanchi@gmail.com"
-                    git config user.name "Deenakumari"
+                echo "===== GIT STATUS ====="
+                git status
 
-                    sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" \
-                    java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
+                echo "===== GIT REMOTE ====="
+                git remote -v
 
-                    git add \
-                    java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
+                git config user.email "deenamadhumanchi@gmail.com"
+                git config user.name "Deenakumari"
 
-                    git diff --cached
+                echo "===== UPDATE IMAGE TAG ====="
 
-                    git commit -m "Update deployment image to version ${BUILD_NUMBER}" || true
+                sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" \
+                java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
 
-                    git push \
-                    https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git \
-                    HEAD:main
-                '''
-            }
+                echo "===== GIT ADD ====="
+
+                git add \
+                java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
+
+                echo "===== GIT DIFF ====="
+
+                git diff --cached
+
+                echo "===== GIT COMMIT ====="
+
+                git commit -m "Update deployment image to version ${BUILD_NUMBER}" || true
+
+                echo "===== GIT PUSH ====="
+
+                git push \
+                https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME}.git \
+                HEAD:main
+            '''
         }
     }
-  }
 }
-      
-              
+
         
+                    
